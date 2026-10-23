@@ -60,4 +60,8 @@ public class Product {
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
     }
+
+    public Double getPrice() {
+    return price;
+}
 }
