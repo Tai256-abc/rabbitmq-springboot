@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Commerce - RabbitMQ Demo</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; font-family: Arial, sans-serif;
+            background: #f4f6f9; color: #202938;
+        }
+        header { background: #172554; color: white; padding: 20px 6%; }
+        header h1 { margin: 0 0 6px; }
+        header p { margin: 0; color: #dbeafe; }
+        main { max-width: 1200px; margin: 25px auto; padding: 0 18px; }
+        .toolbar, .panel {
+            background: white; border-radius: 12px; padding: 20px;
+            margin-bottom: 20px; box-shadow: 0 2px 10px #0000000b;
+        }
+        .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+        label { font-weight: bold; }
+        input, select {
+            padding: 10px; border: 1px solid #cbd5e1;
+            border-radius: 7px; font-size: 15px;
+        }
+        input[type="number"] { width: 85px; }
+        input[type="text"] { width: 100%; }
+        .layout {
+            display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr);
+            gap: 20px; align-items: start;
+        }
+        .products {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 15px;
+        }
+        .product {
+            border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px;
+            display: flex; flex-direction: column; gap: 9px;
+        }
+        .product h3 { margin: 0; font-size: 17px; }
+        .price { font-size: 18px; font-weight: bold; color: #1d4ed8; }
+        .muted { color: #64748b; font-size: 14px; }
+        button {
+            border: 0; border-radius: 7px; padding: 10px 13px;
+            background: #2563eb; color: white; cursor: pointer; font-weight: bold;
+        }
+        button:hover { filter: brightness(.94); }
+        button:disabled { opacity: .55; cursor: not-allowed; }
+        button.secondary { background: #475569; }
+        button.danger { background: #dc2626; }
+        .cart-item { padding: 13px 0; border-bottom: 1px solid #e2e8f0; }
+        .cart-item:last-child { border-bottom: 0; }
+        .cart-line {
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        }
+        .quantity-controls {
+            display: flex; align-items: center; gap: 7px; margin-top: 10px; flex-wrap: wrap;
+        }
+        .quantity-controls button { padding: 6px 10px; }
+        .total { font-size: 21px; font-weight: bold; margin: 18px 0; }
+        .field { margin: 12px 0; }
+        .field label { display: block; margin-bottom: 6px; }
+        .field input, .field select { width: 100%; }
+        .notice {
+            padding: 12px; border-radius: 8px; margin: 12px 0; overflow-wrap: anywhere;
+        }
+        .info { background: #eff6ff; color: #1d4ed8; }
+        .success { background: #dcfce7; color: #166534; }
+        .error { background: #fee2e2; color: #991b1b; }
+        .warning { background: #fef3c7; color: #92400e; }
+        .request-row { padding: 12px 0; border-bottom: 1px solid #e2e8f0; }
+        .request-row:last-child { border-bottom: 0; }
+        .status {
+            display: inline-block; padding: 4px 8px; border-radius: 6px;
+            font-size: 13px; font-weight: bold; background: #e2e8f0;
+        }
+        @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<header>
+    <h1>🛒 E-Commerce Store</h1>
+    <p>Spring Boot · MySQL · RabbitMQ Order Processing Demo</p>
+</header>
+
+<main>
+    <section class="toolbar">
+        <label for="userId">Người dùng:</label>
+        <select id="userId">
+            <option value="1">User 1</option>
+            <option value="2" selected>User 2</option>
+            <option value="3">User 3</option>
+        </select>
+        <button class="secondary" onclick="loadAll()">Tải lại dữ liệu</button>
+        <span id="connectionStatus" class="muted">Đang kết nối backend...</span>
+    </section>
+
+    <div id="globalNotice" aria-live="polite"></div>
+
+    <div class="layout">
+        <section class="panel">
+            <h2>📦 Sản phẩm</h2>
+            <div id="products" class="products">Đang tải sản phẩm...</div>
+        </section>
+
+        <aside>
+            <section class="panel">
+                <h2>🛍️ Giỏ hàng</h2>
+                <div id="cart">Đang tải giỏ hàng...</div>
+                <div class="total">Tổng: <span id="cartTotal">0 ₫</span></div>
+
+                <div class="field">
+                    <label for="shippingAddress">Địa chỉ giao hàng</label>
+                    <input id="shippingAddress" type="text"
+                           value="123 Nguyen Trai, TP HCM"
+                           placeholder="Nhập địa chỉ">
+                </div>
+                <div class="field">
+                    <label for="paymentMethod">Phương thức thanh toán</label>
+                    <select id="paymentMethod">
+                        <option value="COD">Thanh toán khi nhận hàng (COD)</option>
+                        <option value="BANK_TRANSFER">Chuyển khoản</option>
+                    </select>
+                </div>
+
+                <button id="queueButton" onclick="submitOrder()">Đặt hàng qua RabbitMQ</button>
+                <button class="secondary" onclick="refreshCart()">Làm mới giỏ hàng</button>
+                <div id="orderNotice" aria-live="polite"></div>
+            </section>
+
+            <section class="panel">
+                <h2>📨 Theo dõi request</h2>
+                <p class="muted">Trạng thái được cập nhật từ API theo dõi yêu cầu RabbitMQ.</p>
+                <div id="requestHistory">
+                    <p class="muted">Bạn chưa gửi request nào trong phiên này.</p>
+                </div>
+            </section>
+        </aside>
+    </div>
+</main>
+
+<script>
+    const API = "http://localhost:8080/api";
+    let products = [];
+    let cart = null;
+    let requests = [];
+    let submitting = false;
+
+    const money = value => new Intl.NumberFormat("vi-VN", {
+        style: "currency", currency: "VND", maximumFractionDigits: 0
+    }).format(Number(value) || 0);
+
+    function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, char => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;",
+            '"': "&quot;", "'": "&#39;"
+        })[char]);
+    }
+
+    function currentUserId() {
+        return document.getElementById("userId").value;
+    }
+
+    async function apiRequest(path, options = {}) {
+        const response = await fetch(API + path, {
+            ...options,
+            headers: {
+                "Content-Type": "application/json",
+                ...(options.headers || {})
+            }
+        });
+
+        const text = await response.text();
+        let data = text;
+        try { data = text ? JSON.parse(text) : null; } catch {}
+
+        if (!response.ok) {
+            const message = typeof data === "string"
+                ? data
+                : data?.message || data?.error || `HTTP ${response.status}`;
+            throw new Error(message);
+        }
+        return data;
+    }
+
+    function showNotice(elementId, message, type = "info") {
+        document.getElementById(elementId).innerHTML =
+            `<div class="notice ${type}">${escapeHtml(message)}</div>`;
+    }
+
+    function readableError(message) {
+        const text = String(message || "");
+        if (/Insufficient stock/i.test(text)) {
+            const match = text.match(/product id:\s*(\d+)/i);
+            const product = match
+                ? products.find(p => Number(p.id) === Number(match[1]))
+                : null;
+            return product
+                ? `Không đủ tồn kho: ${product.name}. Tồn kho hiện tại: ${product.stockQuantity} sản phẩm.`
+                : `Không đủ tồn kho. ${text}`;
+        }
+        if (/Cart is empty/i.test(text)) return "Giỏ hàng trống. Vui lòng thêm sản phẩm rồi thử lại.";
+        if (/Invalid quantity/i.test(text)) return "Số lượng sản phẩm không hợp lệ.";
+        return text || "Đơn hàng xử lý thất bại.";
+    }
+
+    async function loadAll() {
+        document.getElementById("connectionStatus").textContent = "Đang tải...";
+        try {
+            await Promise.all([loadProducts(), refreshCart()]);
+            document.getElementById("connectionStatus").textContent = "Đã kết nối backend";
+            document.getElementById("globalNotice").innerHTML = "";
+        } catch (error) {
+            document.getElementById("connectionStatus").textContent = "Không kết nối được backend";
+            showNotice("globalNotice",
+                "Không tải được dữ liệu. Kiểm tra Spring Boot tại localhost:8080. " + error.message,
+                "error");
+        }
+    }
+
+    async function loadProducts() {
+        products = await apiRequest("/products");
+        renderProducts();
+    }
+
+    async function refreshCart() {
+        cart = await apiRequest(`/cart/${currentUserId()}`);
+        renderCart();
+    }
+
+    function renderProducts() {
+        const container = document.getElementById("products");
+        if (!Array.isArray(products) || !products.length) {
+            container.innerHTML = "<p>Chưa có sản phẩm.</p>";
+            return;
+        }
+
+        container.innerHTML = products.map(product => {
+            const stock = Number(product.stockQuantity ?? 0);
+            return `
+                <article class="product">
+                    <h3>${escapeHtml(product.name)}</h3>
+                    <div class="price">${money(product.price)}</div>
+                    <div class="muted">Mã sản phẩm: ${product.id}</div>
+                    <div class="muted">Tồn kho: <strong>${stock}</strong></div>
+                    <button ${stock <= 0 ? "disabled" : ""}
+                        onclick="addToCart(${Number(product.id)})">Thêm vào giỏ</button>
+                </article>`;
+        }).join("");
+    }
+
+    function cartItems() {
+        return cart?.items || cart?.cartItems || [];
+    }
+
+    function itemProduct(item) {
+        return item.product || {};
+    }
+
+    function renderCart() {
+        const container = document.getElementById("cart");
+        const items = cartItems();
+
+        if (!items.length) {
+            container.innerHTML = '<p class="muted">Giỏ hàng đang trống.</p>';
+            document.getElementById("cartTotal").textContent = money(0);
+            return;
+        }
+
+        let total = 0;
+        container.innerHTML = items.map(item => {
+            const product = itemProduct(item);
+            const quantity = Number(item.quantity || 0);
+            const price = Number(product.price ?? item.price ?? 0);
+            const stock = Number(product.stockQuantity ?? 0);
+            total += price * quantity;
+
+            return `
+                <div class="cart-item">
+                    <div class="cart-line">
+                        <strong>${escapeHtml(product.name || "Sản phẩm")}</strong>
+                        <span>${money(price * quantity)}</span>
+                    </div>
+                    <div class="muted">${money(price)} / sản phẩm · Tồn kho: ${stock}</div>
+                    ${quantity > stock ? `<div class="notice error">Số lượng ${quantity} vượt tồn kho ${stock}!</div>` : ""}
+                    <div class="quantity-controls">
+                        <button class="secondary"
+                            onclick="changeQuantity(${Number(item.id)}, ${quantity - 1})"
+                            ${quantity <= 1 ? "disabled" : ""}>−</button>
+                        <span>Số lượng: ${quantity}</span>
+                        <button class="secondary"
+                            onclick="changeQuantity(${Number(item.id)}, ${quantity + 1})">+</button>
+                        <button class="danger" onclick="removeItem(${Number(item.id)})">Xóa</button>
+                    </div>
+                </div>`;
+        }).join("");
+
+        document.getElementById("cartTotal").textContent = money(total);
+    }
+
+    async function addToCart(productId) {
+        try {
+            await apiRequest("/cart/add", {
+                method: "POST",
+                body: JSON.stringify({
+                    userId: Number(currentUserId()), productId, quantity: 1
+                })
+            });
+            await Promise.all([refreshCart(), loadProducts()]);
+            showNotice("globalNotice", "Đã thêm sản phẩm vào giỏ hàng.", "success");
+        } catch (error) {
+            showNotice("globalNotice", "Không thêm được sản phẩm: " + error.message, "error");
+        }
+    }
+
+    async function changeQuantity(itemId, quantity) {
+        if (quantity < 1) return;
+        try {
+            await apiRequest("/cart/update", {
+                method: "PUT",
+                body: JSON.stringify({
+                    userId: Number(currentUserId()), itemId, quantity
+                })
+            });
+            await refreshCart();
+        } catch (error) {
+            showNotice("globalNotice", "Không cập nhật được giỏ: " + error.message, "error");
+        }
+    }
+
+    async function removeItem(itemId) {
+        try {
+            await apiRequest(`/cart/${currentUserId()}/item/${itemId}`, {
+                method: "DELETE"
+            });
+            await refreshCart();
+            showNotice("globalNotice", "Đã xóa sản phẩm khỏi giỏ.", "success");
+        } catch (error) {
+            showNotice("globalNotice", "Không xóa được sản phẩm: " + error.message, "error");
+        }
+    }
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function trackRequest(requestEntry, requestId) {
+        const deadline = Date.now() + 60000;
+
+        while (Date.now() < deadline) {
+            await sleep(1000);
+
+            try {
+                const status = await apiRequest(
+                    `/orders/queue/${encodeURIComponent(requestId)}`
+                );
+
+                requestEntry.status = status.status || "PROCESSING";
+                requestEntry.detail = status.message || "Đang chờ kết quả xử lý";
+                renderRequestHistory();
+
+                if (status.status === "SUCCESS") {
+                    showNotice("orderNotice",
+                        `Đặt hàng thành công! Mã đơn hàng: ${status.orderId ?? "đã tạo"}.`,
+                        "success");
+                    await Promise.all([refreshCart(), loadProducts()]);
+                    return;
+                }
+
+                if (status.status === "FAILED") {
+                    const message = readableError(status.message);
+                    requestEntry.detail = message;
+                    showNotice("orderNotice", message, "error");
+                    renderRequestHistory();
+                    await loadProducts();
+                    return;
+                }
+
+                if (status.status === "NOT_FOUND") {
+                    requestEntry.status = "Không tìm thấy trạng thái";
+                    requestEntry.detail = status.message || "Backend chưa tìm thấy request.";
+                    renderRequestHistory();
+                    showNotice("orderNotice", requestEntry.detail, "error");
+                    return;
+                }
+            } catch (error) {
+                requestEntry.detail = "Đang kiểm tra kết quả xử lý...";
+                renderRequestHistory();
+            }
+        }
+
+        requestEntry.status = "Chưa có kết quả";
+        requestEntry.detail =
+            "Đã chờ 60 giây nhưng chưa nhận được trạng thái cuối cùng. Hãy kiểm tra log Consumer.";
+        renderRequestHistory();
+        showNotice("orderNotice", requestEntry.detail, "warning");
+    }
+
+    async function submitOrder() {
+        if (submitting) return;
+
+        const items = cartItems();
+        if (!items.length) {
+            showNotice("orderNotice", "Giỏ hàng trống. Hãy thêm sản phẩm trước.", "warning");
+            return;
+        }
+
+        const address = document.getElementById("shippingAddress").value.trim();
+        if (!address) {
+            showNotice("orderNotice", "Vui lòng nhập địa chỉ giao hàng.", "warning");
+            return;
+        }
+
+        
+
+        submitting = true;
+        const button = document.getElementById("queueButton");
+        button.disabled = true;
+        button.textContent = "Đang gửi request...";
+
+        const requestEntry = {
+            id: "Đang tạo mã...",
+            userId: currentUserId(),
+            createdAt: new Date().toLocaleString("vi-VN"),
+            status: "Đang gửi",
+            detail: "Đang gửi yêu cầu tới backend"
+        };
+        requests.unshift(requestEntry);
+        renderRequestHistory();
+
+        try {
+            const result = await apiRequest("/orders/queue", {
+                method: "POST",
+                body: JSON.stringify({
+                    userId: Number(currentUserId()),
+                    shippingAddress: address,
+                    paymentMethod: document.getElementById("paymentMethod").value
+                })
+            });
+
+            if (!result || !result.requestId) {
+                throw new Error("Backend chưa trả về requestId. Hãy kiểm tra phiên bản OrderController đang chạy.");
+            }
+
+            requestEntry.id = result.requestId;
+            requestEntry.status = result.status || "PROCESSING";
+            requestEntry.detail = result.message || "Yêu cầu đã được tiếp nhận.";
+            showNotice("orderNotice",
+                "RabbitMQ đã tiếp nhận yêu cầu. Đang chờ Consumer xử lý...",
+                "info");
+            renderRequestHistory();
+
+            // Giữ nút khóa trong lúc theo dõi để tránh gửi lặp cùng một giỏ hàng.
+            await trackRequest(requestEntry, result.requestId);
+        } catch (error) {
+            requestEntry.status = "Gửi thất bại";
+            requestEntry.detail = error.message;
+            showNotice("orderNotice", "Không gửi được yêu cầu: " + error.message, "error");
+            renderRequestHistory();
+        } finally {
+            submitting = false;
+            button.disabled = false;
+            button.textContent = "Đặt hàng qua RabbitMQ";
+        }
+    }
+
+    function renderRequestHistory() {
+        const container = document.getElementById("requestHistory");
+        if (!requests.length) {
+            container.innerHTML = '<p class="muted">Bạn chưa gửi request nào trong phiên này.</p>';
+            return;
+        }
+
+        container.innerHTML = requests.map(request => {
+            const statusClass = request.status === "SUCCESS" ? "success"
+                : request.status === "FAILED" || request.status === "Gửi thất bại"
+                    ? "error" : "info";
+
+            return `
+                <div class="request-row">
+                    <strong>${escapeHtml(request.id)}</strong>
+                    <div class="muted">User ${escapeHtml(request.userId)} · ${escapeHtml(request.createdAt)}</div>
+                    <p><span class="status">${escapeHtml(request.status)}</span></p>
+                    <div class="notice ${statusClass}">${escapeHtml(request.detail)}</div>
+                </div>`;
+        }).join("");
+    }
+
+    document.getElementById("userId").addEventListener("change", async () => {
+        try {
+            await refreshCart();
+            showNotice("globalNotice", "Đã chuyển người dùng.", "info");
+        } catch (error) {
+            showNotice("globalNotice", "Không tải được giỏ hàng: " + error.message, "error");
+        }
+    });
+
+    loadAll();
+</script>
+</body>
+</html>
