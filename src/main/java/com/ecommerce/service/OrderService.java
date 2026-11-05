@@ -4,6 +4,7 @@ package com.ecommerce.service;
 import com.ecommerce.event.OrderCreatedEvent;
 import com.ecommerce.model.*;
 import com.ecommerce.repository.OrderRepository;
+import com.ecommerce.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +19,7 @@ public class OrderService {
     private final CartService cartService;
     private final UserService userService;
     private final OrderEventProducer orderEventProducer;
+    private final ProductRepository productRepository;
 
     public List<Order> getAllOrders() {
         return orderRepository.findAll();
@@ -54,6 +56,29 @@ public class OrderService {
 
         double totalAmount = 0.0;
 
+        // Trừ tồn kho có điều kiện trong cùng transaction.
+        // Nếu bất kỳ sản phẩm nào không đủ, ném exception để rollback
+        // tất cả thao tác trừ kho trước đó.
+        for (CartItem cartItem : cart.getItems()) {
+            Long productId = cartItem.getProduct().getId();
+            int quantity = cartItem.getQuantity();
+
+            if (quantity <= 0) {
+                throw new RuntimeException(
+                        "Invalid quantity for product id: " + productId);
+            }
+
+            int updatedRows = productRepository.decreaseStockIfAvailable(
+                    productId,
+                    quantity
+            );
+
+            if (updatedRows != 1) {
+                throw new RuntimeException(
+                        "Insufficient stock for product id: " + productId);
+            }
+        }
+
         for (CartItem cartItem : cart.getItems()) {
             OrderItem orderItem = new OrderItem();
             orderItem.setOrder(order);
@@ -67,7 +92,7 @@ public class OrderService {
 
         order.setTotalAmount(totalAmount);
 
-        Order savedOrder = orderRepository.save(order);
+        Order savedOrder = orderRepository.saveAndFlush(order);
 
         OrderCreatedEvent event = new OrderCreatedEvent(
                 savedOrder.getId(),
