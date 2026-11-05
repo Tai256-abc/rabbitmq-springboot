@@ -49,8 +49,17 @@ public class CartService {
         Cart cart = getCartByUserId(userId);
         Product product = productService.getProductById(productId);
 
+        if (quantity == null || quantity <= 0) {
+            throw new RuntimeException("Invalid quantity");
+        }
+
         Optional<CartItem> existingItem = cartItemRepository
                 .findByCartIdAndProductId(cart.getId(), productId);
+
+        int currentQuantity = existingItem.map(CartItem::getQuantity).orElse(0);
+        if (quantity > product.getStockQuantity() - currentQuantity) {
+            throw new RuntimeException("Insufficient stock for product id: " + productId);
+        }
 
         if (existingItem.isPresent()) {
             CartItem item = existingItem.get();
@@ -78,6 +87,10 @@ public class CartService {
             cart.getItems().remove(item);
             cartItemRepository.delete(item);
         } else {
+            Product product = item.getProduct();
+            if (quantity > product.getStockQuantity()) {
+                throw new RuntimeException("Insufficient stock for product id: " + product.getId());
+            }
             item.setQuantity(quantity);
             cartItemRepository.save(item);
         }

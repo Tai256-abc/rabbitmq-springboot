@@ -88,9 +88,7 @@
     <section class="toolbar">
         <label for="userId">Người dùng:</label>
         <select id="userId">
-            <option value="1">User 1</option>
-            <option value="2" selected>User 2</option>
-            <option value="3">User 3</option>
+            <option value="">Đang tải người dùng...</option>
         </select>
         <button class="secondary" onclick="loadAll()">Tải lại dữ liệu</button>
         <span id="connectionStatus" class="muted">Đang kết nối backend...</span>
@@ -208,6 +206,7 @@
     async function loadAll() {
         document.getElementById("connectionStatus").textContent = "Đang tải...";
         try {
+            await loadUsers();
             await Promise.all([loadProducts(), refreshCart()]);
             document.getElementById("connectionStatus").textContent = "Đã kết nối backend";
             document.getElementById("globalNotice").innerHTML = "";
@@ -224,6 +223,25 @@
         renderProducts();
     }
 
+    async function loadUsers() {
+        const users = await apiRequest("/users");
+        const select = document.getElementById("userId");
+        const previousUserId = select.value;
+
+        select.innerHTML = users.map(user =>
+            `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)} (ID: ${escapeHtml(user.id)})</option>`
+        ).join("");
+
+        if (users.some(user => String(user.id) === previousUserId)) {
+            select.value = previousUserId;
+        } else if (users.length) {
+            select.value = String(users[0].id);
+        } else {
+            select.innerHTML = '<option value="">Chưa có người dùng</option>';
+            throw new Error("Database chưa có người dùng.");
+        }
+    }
+
     async function refreshCart() {
         cart = await apiRequest(`/cart/${currentUserId()}`);
         renderCart();
@@ -238,13 +256,15 @@
 
         container.innerHTML = products.map(product => {
             const stock = Number(product.stockQuantity ?? 0);
+            const inCart = cartItems().find(item => Number(itemProduct(item).id) === Number(product.id));
+            const cartQuantity = Number(inCart?.quantity || 0);
             return `
                 <article class="product">
                     <h3>${escapeHtml(product.name)}</h3>
                     <div class="price">${money(product.price)}</div>
                     <div class="muted">Mã sản phẩm: ${product.id}</div>
                     <div class="muted">Tồn kho: <strong>${stock}</strong></div>
-                    <button ${stock <= 0 ? "disabled" : ""}
+                    <button ${stock <= cartQuantity ? "disabled" : ""}
                         onclick="addToCart(${Number(product.id)})">Thêm vào giỏ</button>
                 </article>`;
         }).join("");
@@ -290,7 +310,8 @@
                             ${quantity <= 1 ? "disabled" : ""}>−</button>
                         <span>Số lượng: ${quantity}</span>
                         <button class="secondary"
-                            onclick="changeQuantity(${Number(item.id)}, ${quantity + 1})">+</button>
+                            onclick="changeQuantity(${Number(item.id)}, ${quantity + 1})"
+                            ${quantity >= stock ? "disabled" : ""}>+</button>
                         <button class="danger" onclick="removeItem(${Number(item.id)})">Xóa</button>
                     </div>
                 </div>`;
