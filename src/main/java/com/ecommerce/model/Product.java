@@ -61,7 +61,4 @@ public class Product {
         updatedAt = LocalDateTime.now();
     }
 
-    public Double getPrice() {
-    return price;
-}
 }
